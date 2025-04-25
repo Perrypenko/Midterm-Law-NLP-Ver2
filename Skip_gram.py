@@ -4,6 +4,7 @@ from collections import Counter
 import random
 from sklearn.metrics.pairwise import cosine_similarity
 import gc  # For garbage collection
+import os  # For file operations
 
 class OptimizedSkipGram:
     def __init__(self, vector_size=100, window_size=2, learning_rate=0.025, epochs=5, min_count=5, max_vocab_size=50000):
@@ -51,7 +52,6 @@ class OptimizedSkipGram:
         
         for sentence in corpus:
             word_indices = []
-            
             # Convert sentence to indices and apply subsampling
             for word in sentence:
                 if word in self.word_to_idx:
@@ -148,6 +148,48 @@ class OptimizedSkipGram:
                     similarities.append((self.idx_to_word[idx], sim))
         
         return sorted(similarities, key=lambda x: x[1], reverse=True)[:top_n]
+    
+    def save_model(self, filepath):
+        """Save the trained model to disk"""
+        model_data = {
+            'vector_size': self.vector_size,
+            'window_size': self.window_size,
+            'learning_rate': self.learning_rate,
+            'epochs': self.epochs,
+            'min_count': self.min_count,
+            'max_vocab_size': self.max_vocab_size,
+            'word_to_idx': self.word_to_idx,
+            'idx_to_word': self.idx_to_word,
+            'word_counts': dict(self.word_counts),
+            'vocab_size': self.vocab_size,
+            'W': self.W,
+            'W_prime': self.W_prime
+        }
+        
+        np.savez_compressed(filepath, **model_data)
+        print(f"Model saved to {filepath}")
+
+    @classmethod
+    def load_model(cls, filepath):
+        """Load a trained model from disk"""
+        loaded_data = np.load(filepath, allow_pickle=True)
+        
+        model = cls()
+        model.vector_size = loaded_data['vector_size'].item()
+        model.window_size = loaded_data['window_size'].item()
+        model.learning_rate = loaded_data['learning_rate'].item()
+        model.epochs = loaded_data['epochs'].item()
+        model.min_count = loaded_data['min_count'].item()
+        model.max_vocab_size = loaded_data['max_vocab_size'].item()
+        model.word_to_idx = loaded_data['word_to_idx'].item()
+        model.idx_to_word = loaded_data['idx_to_word'].item()
+        model.word_counts = Counter(loaded_data['word_counts'].item())
+        model.vocab_size = loaded_data['vocab_size'].item()
+        model.W = loaded_data['W']
+        model.W_prime = loaded_data['W_prime']
+        
+        print(f"Model loaded from {filepath}")
+        return model
 
 def load_jsonl_sample(file_path, max_docs=5000, max_tokens_per_doc=1000):
     """Load a sample of the JSONL file with limits on document and token counts"""
@@ -178,19 +220,29 @@ def load_jsonl_sample(file_path, max_docs=5000, max_tokens_per_doc=1000):
 def main():
     # File path to your JSONL file
     jsonl_file = "uk_legislation/train.jsonl"
+    model_file = "skipgram_model.npz"
     
-    # Load a sample of the corpus
-    print("Loading corpus sample...")
-    corpus, word_counts = load_jsonl_sample(jsonl_file, max_docs=5000)
-    
-    # Initialize and train the optimized Skip-Gram model
-    print("Training optimized Skip-Gram model...")
-    model = OptimizedSkipGram(vector_size=100, window_size=2, learning_rate=0.025, 
-                             epochs=3, min_count=5, max_vocab_size=20000)
-    model.build_vocab(word_counts)
-    
-    training_data = model.generate_training_data(corpus)
-    model.train(training_data, batch_size=2048, negative_samples=5)
+    # Check if a trained model exists
+    if os.path.exists(model_file):
+        print("Loading pre-trained model...")
+        model = OptimizedSkipGram.load_model(model_file)
+    else:
+        # Load a sample of the corpus
+        print("No pre-trained model found. Training a new model...")
+        print("Loading corpus sample...")
+        corpus, word_counts = load_jsonl_sample(jsonl_file, max_docs=5000)
+        
+        # Initialize and train the optimized Skip-Gram model
+        print("Training optimized Skip-Gram model...")
+        model = OptimizedSkipGram(vector_size=100, window_size=2, learning_rate=0.025, 
+                                  epochs=3, min_count=5, max_vocab_size=20000)
+        model.build_vocab(word_counts)
+        
+        training_data = model.generate_training_data(corpus)
+        model.train(training_data, batch_size=2048, negative_samples=5)
+        
+        # Save the trained model
+        model.save_model(model_file)
     
     # Interactive query loop
     while True:
