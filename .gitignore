@@ -1,4 +1,4 @@
-# Ignore all .json files, (size problems)
+# Ignore all .jsonl files, (size problems)
 uk_legislation/train.jsonl
 uk_legislation/test.jsonl
 uk_legislation/validation.jsonl
