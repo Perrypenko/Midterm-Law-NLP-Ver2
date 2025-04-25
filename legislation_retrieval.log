@@ -1,22 +1,12 @@
-2025-04-25 22:11:09,780 - legislation_retrieval - INFO - Loading preprocessed data...
-2025-04-25 22:11:11,594 - legislation_retrieval - INFO - Successfully loaded all preprocessed data.
-2025-04-25 22:11:11,595 - legislation_retrieval - INFO - Starting interactive mode
-2025-04-25 22:11:17,615 - legislation_retrieval - ERROR - Error retrieving legislation: 'title'
-2025-04-25 22:11:18,087 - legislation_retrieval - ERROR - Error retrieving legislation: 'title'
-2025-04-25 22:11:18,548 - legislation_retrieval - ERROR - Error retrieving legislation: 'title'
-2025-04-25 22:11:33,074 - legislation_retrieval - ERROR - Error retrieving legislation: 'title'
-2025-04-25 22:14:50,276 - legislation_retrieval - INFO - Loading preprocessed data...
-2025-04-25 22:14:52,276 - legislation_retrieval - INFO - Successfully loaded all preprocessed data.
-2025-04-25 22:14:52,279 - legislation_retrieval - INFO - Starting interactive mode
-2025-04-25 22:15:56,484 - legislation_retrieval - INFO - Loading preprocessed data...
-2025-04-25 22:15:58,275 - legislation_retrieval - INFO - Successfully loaded all preprocessed data.
-2025-04-25 22:16:04,665 - legislation_retrieval - ERROR - Error retrieving legislation: 'title'
-2025-04-25 22:16:05,134 - legislation_retrieval - ERROR - Error retrieving legislation: 'title'
-2025-04-25 22:16:05,596 - legislation_retrieval - ERROR - Error retrieving legislation: 'title'
-2025-04-25 22:16:42,920 - legislation_retrieval - ERROR - Error retrieving legislation: 'title'
-2025-04-25 22:19:32,367 - legislation_retrieval - INFO - Loading preprocessed data...
-2025-04-25 22:19:34,167 - legislation_retrieval - INFO - Successfully loaded all preprocessed data.
-2025-04-25 22:23:41,445 - legislation_retrieval - INFO - Loading preprocessed data...
-2025-04-25 22:23:43,305 - legislation_retrieval - INFO - Successfully loaded all preprocessed data.
-2025-04-25 22:24:40,117 - legislation_retrieval - INFO - Loading preprocessed data...
-2025-04-25 22:24:41,928 - legislation_retrieval - INFO - Successfully loaded all preprocessed data.
+2025-04-25 22:32:12,258 - legislation_retrieval - WARNING - Preprocessed files not found.
+2025-04-25 22:32:12,258 - legislation_retrieval - INFO - Preprocessing legislation data. This may take a while...
+2025-04-25 22:32:14,399 - legislation_retrieval - INFO - Loaded 44514 documents.
+2025-04-25 22:32:14,399 - legislation_retrieval - INFO - Preprocessing text...
+2025-04-25 22:33:13,985 - legislation_retrieval - INFO - Processed DataFrame saved to preprocessed_legislation.pkl
+2025-04-25 22:33:13,986 - legislation_retrieval - INFO - Fitting TF-IDF vectorizer...
+2025-04-25 22:34:28,477 - legislation_retrieval - INFO - TF-IDF matrix shape: (44514, 2026114)
+2025-04-25 22:34:28,478 - legislation_retrieval - INFO - Applying LSA to 100 components...
+2025-04-25 22:37:11,150 - legislation_retrieval - INFO - LSA matrix shape: (44514, 100)
+2025-04-25 22:37:11,151 - legislation_retrieval - INFO - Explained variance ratio sum: 0.1947
+2025-04-25 22:37:14,561 - legislation_retrieval - INFO - TF-IDF vectorizer, SVD model, and LSA matrix saved.
+2025-04-25 22:37:14,562 - legislation_retrieval - INFO - Preprocessing completed in 302.30 seconds.
