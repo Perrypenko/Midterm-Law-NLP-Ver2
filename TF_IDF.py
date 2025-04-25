@@ -97,7 +97,8 @@ def load_preprocessed_data(processed_path='preprocessed_legislation.pkl',
 # ---------------------------
 # Step 3: Retrieval Function with LSA
 # ---------------------------
-def retrieve_relevant_legislation(query, df, tfidf_vectorizer, svd_model, lsa_matrix, top_n=5):
+def retrieve_relevant_legislation(query, df, tfidf_vectorizer, svd_model, lsa_matrix, top_n=3):
+    # Function remains the same except default top_n changed from 5 to 3
     processed_query = preprocess_text(query)
     
     # Transform query using TF-IDF vectorizer
@@ -121,7 +122,6 @@ def retrieve_relevant_legislation(query, df, tfidf_vectorizer, svd_model, lsa_ma
             'text_preview': df.iloc[idx]['text_preview']
         })
     return results
-
 # ---------------------------
 # Step 4: Main Application
 # ---------------------------
