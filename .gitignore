@@ -5,3 +5,11 @@ uk_legislation/validation.jsonl
 uk_courts_cases/train.jsonl
 uk_courts_cases/test.jsonl
 uk_courts_cases/validation.jsonl
+
+# Ignore all pkl,npz files, (size problems)
+tfidf_vectorizer.pkl
+tfidf_matrix.npz
+preprocessed_legislation.pkl
+
+*.pkl
+*.npz   

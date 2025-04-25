@@ -4,6 +4,7 @@ import numpy as np
 import os
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
+from sklearn.decomposition import TruncatedSVD
 
 # ---------------------------
 # Utility: Preprocessing
@@ -12,12 +13,14 @@ def preprocess_text(text):
     return text.lower()
 
 # ---------------------------
-# Step 1: Preprocessing & Saving
+# Step 1: Preprocessing & Saving with LSA
 # ---------------------------
 def preprocess_legislation_data(jsonl_path,
                                processed_path='preprocessed_legislation.pkl',
                                vectorizer_path='tfidf_vectorizer.pkl',
-                               matrix_path='tfidf_matrix.npz'):
+                               svd_path='svd_model.pkl',
+                               lsa_matrix_path='lsa_matrix.npz',
+                               n_components=100):
     print("Preprocessing large legislation file. This may take a while...")
 
     # Load JSONL and convert to DataFrame
@@ -43,26 +46,35 @@ def preprocess_legislation_data(jsonl_path,
         use_idf=True, norm='l2', ngram_range=(1, 2)
     )
     tfidf_matrix = tfidf_vectorizer.fit_transform(df['processed_text'])
-    print("TF-IDF matrix shape:", tfidf_matrix.shape)
+    print(f"TF-IDF matrix shape: {tfidf_matrix.shape}")
 
-    # Save vectorizer and matrix
+    # Apply LSA using TruncatedSVD for dimensionality reduction
+    print(f"Applying LSA (dimensionality reduction) to {n_components} components...")
+    svd_model = TruncatedSVD(n_components=n_components, algorithm='randomized', n_iter=7, random_state=42)
+    lsa_matrix = svd_model.fit_transform(tfidf_matrix)
+    print(f"LSA matrix shape: {lsa_matrix.shape}")
+    print(f"Explained variance ratio sum: {svd_model.explained_variance_ratio_.sum():.4f}")
+
+    # Save vectorizer, SVD model, and LSA matrix
     import pickle
     with open(vectorizer_path, 'wb') as f:
         pickle.dump(tfidf_vectorizer, f)
-    import scipy.sparse as sparse
-    sparse.save_npz(matrix_path, tfidf_matrix)
-    print("TF-IDF vectorizer and matrix saved.")
+    with open(svd_path, 'wb') as f:
+        pickle.dump(svd_model, f)
+    np.save(lsa_matrix_path, lsa_matrix)
+    print("TF-IDF vectorizer, SVD model, and LSA matrix saved.")
     
-    return df, tfidf_vectorizer, tfidf_matrix
+    return df, tfidf_vectorizer, svd_model, lsa_matrix
 
 # ---------------------------
 # Step 2: Loading Preprocessed Data
 # ---------------------------
 def load_preprocessed_data(processed_path='preprocessed_legislation.pkl',
                           vectorizer_path='tfidf_vectorizer.pkl',
-                          matrix_path='tfidf_matrix.npz'):
+                          svd_path='svd_model.pkl',
+                          lsa_matrix_path='lsa_matrix.npy'):
     # Check for existence, else preprocess
-    if not (os.path.exists(processed_path) and os.path.exists(vectorizer_path) and os.path.exists(matrix_path)):
+    if not all(os.path.exists(p) for p in [processed_path, vectorizer_path, svd_path, lsa_matrix_path]):
         raise FileNotFoundError("Preprocessed files not found. Please run preprocessing first.")
 
     print("Loading preprocessed DataFrame...")
@@ -73,20 +85,33 @@ def load_preprocessed_data(processed_path='preprocessed_legislation.pkl',
     with open(vectorizer_path, 'rb') as f:
         tfidf_vectorizer = pickle.load(f)
 
-    print("Loading TF-IDF matrix...")
-    import scipy.sparse as sparse
-    tfidf_matrix = sparse.load_npz(matrix_path)
+    print("Loading SVD model...")
+    with open(svd_path, 'rb') as f:
+        svd_model = pickle.load(f)
 
-    return df, tfidf_vectorizer, tfidf_matrix
+    print("Loading LSA matrix...")
+    lsa_matrix = np.load(lsa_matrix_path)
+
+    return df, tfidf_vectorizer, svd_model, lsa_matrix
 
 # ---------------------------
-# Step 3: Retrieval Function
+# Step 3: Retrieval Function with LSA
 # ---------------------------
-def retrieve_relevant_legislation(query, df, tfidf_vectorizer, tfidf_matrix, top_n=5):
+def retrieve_relevant_legislation(query, df, tfidf_vectorizer, svd_model, lsa_matrix, top_n=5):
     processed_query = preprocess_text(query)
+    
+    # Transform query using TF-IDF vectorizer
     query_vector = tfidf_vectorizer.transform([processed_query])
-    similarity_scores = cosine_similarity(query_vector, tfidf_matrix).flatten()
+    
+    # Apply LSA transformation to query vector
+    query_lsa = svd_model.transform(query_vector)
+    
+    # Calculate cosine similarity between query and all legislation documents in LSA space
+    similarity_scores = cosine_similarity(query_lsa, lsa_matrix).flatten()
+    
+    # Get indices of top n most similar documents
     top_indices = similarity_scores.argsort()[-top_n:][::-1]
+    
     results = []
     for idx in top_indices:
         results.append({
@@ -100,7 +125,7 @@ def retrieve_relevant_legislation(query, df, tfidf_vectorizer, tfidf_matrix, top
 # ---------------------------
 # Step 4: Main Application
 # ---------------------------
-def main(df, tfidf_vectorizer, tfidf_matrix):
+def main(df, tfidf_vectorizer, svd_model, lsa_matrix):
     print("UK Legislation Retrieval System")
     print("-------------------------------")
     print("Enter a case description to find relevant UK legislation.")
@@ -118,7 +143,7 @@ def main(df, tfidf_vectorizer, tfidf_matrix):
             print("\n=== RUNNING TEST QUERIES ===")
             for test_query in test_queries:
                 print(f"\nTest query: '{test_query}'")
-                results = retrieve_relevant_legislation(test_query, df, tfidf_vectorizer, tfidf_matrix)
+                results = retrieve_relevant_legislation(test_query, df, tfidf_vectorizer, svd_model, lsa_matrix)
                 print("Top relevant legislation:")
                 for i, result in enumerate(results, 1):
                     print(f"{i}. {result['year']} (Similarity: {result['similarity']:.4f})")
@@ -131,7 +156,7 @@ def main(df, tfidf_vectorizer, tfidf_matrix):
             print("Please enter a valid case description.")
             continue
         
-        results = retrieve_relevant_legislation(query, df, tfidf_vectorizer, tfidf_matrix)
+        results = retrieve_relevant_legislation(query, df, tfidf_vectorizer, svd_model, lsa_matrix)
         
         print("\nTop relevant legislation:")
         print("-------------------------")
@@ -149,21 +174,26 @@ if __name__ == "__main__":
     jsonl_path = os.path.join('uk_legislation/train.jsonl')
     processed_path = 'preprocessed_legislation.pkl'
     vectorizer_path = 'tfidf_vectorizer.pkl'
-    matrix_path = 'tfidf_matrix.npz'
+    svd_path = 'svd_model.pkl'
+    lsa_matrix_path = 'lsa_matrix.npy'
 
     # If preprocessed files don't exist, create them
-    if not (os.path.exists(processed_path) and os.path.exists(vectorizer_path) and os.path.exists(matrix_path)):
+    if not all(os.path.exists(p) for p in [processed_path, vectorizer_path, svd_path, lsa_matrix_path]):
         print("Preprocessed files not found. Running preprocessing...")
-        df, tfidf_vectorizer, tfidf_matrix = preprocess_legislation_data(jsonl_path, processed_path, vectorizer_path, matrix_path)
+        df, tfidf_vectorizer, svd_model, lsa_matrix = preprocess_legislation_data(
+            jsonl_path, processed_path, vectorizer_path, svd_path, lsa_matrix_path, n_components=100
+        )
     else:
         # Load preprocessed data
-        df, tfidf_vectorizer, tfidf_matrix = load_preprocessed_data(processed_path, vectorizer_path, matrix_path)
+        df, tfidf_vectorizer, svd_model, lsa_matrix = load_preprocessed_data(
+            processed_path, vectorizer_path, svd_path, lsa_matrix_path
+        )
     
     # Test section to quickly check if the code works
     print("\n=== QUICK TEST ===")
     print("Running a sample query to test functionality...")
     sample_query = "tax law"
-    results = retrieve_relevant_legislation(sample_query, df, tfidf_vectorizer, tfidf_matrix)
+    results = retrieve_relevant_legislation(sample_query, df, tfidf_vectorizer, svd_model, lsa_matrix)
     
     print(f"\nResults for test query: '{sample_query}'")
     for i, result in enumerate(results, 1):
@@ -176,4 +206,4 @@ if __name__ == "__main__":
     print()
     
     # Start the main interactive system
-    main(df, tfidf_vectorizer, tfidf_matrix)
+    main(df, tfidf_vectorizer, svd_model, lsa_matrix)
