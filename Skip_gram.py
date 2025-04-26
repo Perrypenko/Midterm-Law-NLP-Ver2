@@ -5,6 +5,8 @@ import random
 from sklearn.metrics.pairwise import cosine_similarity
 import gc  # For garbage collection
 import os  # For file operations
+import re  # For regular expressions
+import string  # For punctuation handling
 
 # ---------------------------
 # Skip-Gram Model Definition
@@ -74,7 +76,7 @@ class OptimizedSkipGram:
             # Generate skip-gram pairs
             for i, center_idx in enumerate(word_indices):
                 context_indices = list(range(max(0, i - self.window_size), i)) + \
-                                 list(range(i + 1, min(len(word_indices), i + self.window_size + 1)))
+                                  list(range(i + 1, min(len(word_indices), i + self.window_size + 1)))
                 
                 for context_idx in context_indices:
                     if 0 <= context_idx < len(word_indices):
@@ -210,6 +212,13 @@ class OptimizedSkipGram:
         return model
 
 # ---------------------------
+# Text Preprocessing Functions
+# ---------------------------
+def remove_punctuation(text):
+    """Remove punctuation from text"""
+    return ''.join([char for char in text if char not in string.punctuation])
+
+# ---------------------------
 # Data Loading Functions
 # ---------------------------
 def load_jsonl_sample(file_path, max_docs=5000, max_tokens_per_doc=1000):
@@ -225,8 +234,10 @@ def load_jsonl_sample(file_path, max_docs=5000, max_tokens_per_doc=1000):
                 
             data = json.loads(line)
             if 'text' in data:
-                # Simple tokenization and limit tokens per document
-                tokens = data['text'].lower().split()[:max_tokens_per_doc]
+                # Clean text by removing punctuation
+                clean_text = remove_punctuation(data['text'].lower())
+                # Tokenize and limit tokens per document
+                tokens = clean_text.split()[:max_tokens_per_doc]
                 corpus.append(tokens)
                 
                 # Update word counts
@@ -275,14 +286,17 @@ def main():
         query = input("\nEnter a legal term to find Similar UK terms: ").strip().lower()
         if query == 'exit':
             break
-    
-        similar_terms = model.find_similar_words(query)
+        
+        # Clean the query by removing punctuation
+        clean_query = remove_punctuation(query)
+        
+        similar_terms = model.find_similar_words(clean_query)
         if similar_terms:
-            print(f"\nTerms similar to '{query}':")
+            print(f"\nTerms similar to '{clean_query}':")
             for i, (term, score) in enumerate(similar_terms, 1):
                 print(f"{i}. {term} (confidence: {score*100:.2f}%)")
         else:
-            print(f"No similar terms found for '{query}'.")
+            print(f"No similar terms found for '{clean_query}'.")
 
 if __name__ == "__main__":
     main()
