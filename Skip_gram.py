@@ -7,6 +7,7 @@ import gc  # For garbage collection
 import os  # For file operations
 import re  # For regular expressions
 import string  # For punctuation handling
+import time  # For performance measurement
 
 # ---------------------------
 # Skip-Gram Model Definition
@@ -30,14 +31,14 @@ class OptimizedSkipGram:
     # Step 1: Vocabulary Building
     # ---------------------------
     def build_vocab(self, word_counts=None):
+        start_time = time.perf_counter()
+        
         if word_counts:
             self.word_counts = word_counts
         
         # Filter by frequency and limit vocabulary size
         vocab = [word for word, count in self.word_counts.most_common(self.max_vocab_size) 
                 if count >= self.min_count]
-        
-        print(f"Vocabulary size: {len(vocab)} words")
         
         # Create word mappings
         self.word_to_idx = {word: i for i, word in enumerate(vocab)}
@@ -53,11 +54,18 @@ class OptimizedSkipGram:
         # Clear memory
         del vocab
         gc.collect()
+        
+        end_time = time.perf_counter()
+        elapsed_time = end_time - start_time
+        print(f"Vocabulary size: {self.vocab_size} words")
+        print(f"Vocabulary building time: {elapsed_time:.2f} seconds")
     
     # ---------------------------
     # Step 2: Training Data Generation
     # ---------------------------
     def generate_training_data(self, corpus, subsample_threshold=1e-5):
+        start_time = time.perf_counter()
+        
         training_data = []
         total_words = sum(self.word_counts.values())
         
@@ -82,19 +90,26 @@ class OptimizedSkipGram:
                     if 0 <= context_idx < len(word_indices):
                         training_data.append((center_idx, word_indices[context_idx]))
         
+        end_time = time.perf_counter()
+        elapsed_time = end_time - start_time
         print(f"Generated {len(training_data)} training pairs")
+        print(f"Training data generation time: {elapsed_time:.2f} seconds")
         return training_data
     
     # ---------------------------
     # Step 3: Model Training with Negative Sampling
     # ---------------------------
     def train(self, training_data, batch_size=2048, negative_samples=5):
+        total_start_time = time.perf_counter()
+        
         for epoch in range(self.epochs):
+            epoch_start_time = time.perf_counter()
             loss = 0
             random.shuffle(training_data)
             
             # Process in batches
             for i in range(0, len(training_data), batch_size):
+                batch_start_time = time.perf_counter()
                 batch = training_data[i:i+batch_size]
                 batch_loss = 0
                 
@@ -127,10 +142,19 @@ class OptimizedSkipGram:
                 
                 loss += batch_loss
                 
+                batch_end_time = time.perf_counter()
+                batch_elapsed_time = batch_end_time - batch_start_time
+                
                 if i % (10 * batch_size) == 0:
-                    print(f"Epoch {epoch+1}, Batch {i//batch_size}, Progress: {i/len(training_data)*100:.1f}%")
+                    print(f"Epoch {epoch+1}, Batch {i//batch_size}, Progress: {i/len(training_data)*100:.1f}%, Batch time: {batch_elapsed_time:.2f} seconds")
             
-            print(f"Epoch {epoch+1}/{self.epochs}, Loss: {loss/len(training_data)}")
+            epoch_end_time = time.perf_counter()
+            epoch_elapsed_time = epoch_end_time - epoch_start_time
+            print(f"Epoch {epoch+1}/{self.epochs}, Loss: {loss/len(training_data)}, Epoch time: {epoch_elapsed_time:.2f} seconds")
+        
+        total_end_time = time.perf_counter()
+        total_elapsed_time = total_end_time - total_start_time
+        print(f"Total training time: {total_elapsed_time:.2f} seconds")
     
     # ---------------------------
     # Step 4: Word Vector Operations
@@ -141,6 +165,8 @@ class OptimizedSkipGram:
         return None
     
     def find_similar_words(self, word, top_n=10):
+        start_time = time.perf_counter()
+        
         if word not in self.word_to_idx:
             print(f"'{word}' not in vocabulary")
             return []
@@ -164,13 +190,21 @@ class OptimizedSkipGram:
                 if idx != word_idx:
                     similarities.append((self.idx_to_word[idx], sim))
         
-        return sorted(similarities, key=lambda x: x[1], reverse=True)[:top_n]
+        results = sorted(similarities, key=lambda x: x[1], reverse=True)[:top_n]
+        
+        end_time = time.perf_counter()
+        elapsed_time = end_time - start_time
+        print(f"Similarity search time: {elapsed_time:.4f} seconds")
+        
+        return results
     
     # ---------------------------
     # Step 5: Model Persistence
     # ---------------------------
     def save_model(self, filepath):
         """Save the trained model to disk"""
+        start_time = time.perf_counter()
+        
         model_data = {
             'vector_size': self.vector_size,
             'window_size': self.window_size,
@@ -187,11 +221,17 @@ class OptimizedSkipGram:
         }
         
         np.savez_compressed(filepath, **model_data)
+        
+        end_time = time.perf_counter()
+        elapsed_time = end_time - start_time
         print(f"Model saved to {filepath}")
+        print(f"Model saving time: {elapsed_time:.2f} seconds")
 
     @classmethod
     def load_model(cls, filepath):
         """Load a trained model from disk"""
+        start_time = time.perf_counter()
+        
         loaded_data = np.load(filepath, allow_pickle=True)
         
         model = cls()
@@ -208,7 +248,10 @@ class OptimizedSkipGram:
         model.W = loaded_data['W']
         model.W_prime = loaded_data['W_prime']
         
+        end_time = time.perf_counter()
+        elapsed_time = end_time - start_time
         print(f"Model loaded from {filepath}")
+        print(f"Model loading time: {elapsed_time:.2f} seconds")
         return model
 
 # ---------------------------
@@ -223,6 +266,8 @@ def remove_punctuation(text):
 # ---------------------------
 def load_jsonl_sample(file_path, max_docs=5000, max_tokens_per_doc=1000):
     """Load a sample of the JSONL file with limits on document and token counts"""
+    start_time = time.perf_counter()
+    
     corpus = []
     word_counts = Counter()
     doc_count = 0
@@ -246,21 +291,29 @@ def load_jsonl_sample(file_path, max_docs=5000, max_tokens_per_doc=1000):
                 
                 doc_count += 1
     
+    end_time = time.perf_counter()
+    elapsed_time = end_time - start_time
     print(f"Loaded {len(corpus)} documents with {sum(len(doc) for doc in corpus)} tokens")
+    print(f"Data loading time: {elapsed_time:.2f} seconds")
     return corpus, word_counts
 
 # ---------------------------
 # Main Execution
 # ---------------------------
 def main():
+    overall_start_time = time.perf_counter()
+    
     # File path to your JSONL file
     jsonl_file = "uk_legislation/train.jsonl"
     model_file = "skipgram_model.npz"
     
     # Check if a trained model exists
     if os.path.exists(model_file):
+        load_start_time = time.perf_counter()
         print("Loading pre-trained model...")
         model = OptimizedSkipGram.load_model(model_file)
+        load_end_time = time.perf_counter()
+        print(f"Model loading time: {load_end_time - load_start_time:.2f} seconds")
     else:
         # Load a sample of the corpus
         print("No pre-trained model found. Training a new model...")
@@ -277,7 +330,13 @@ def main():
         model.train(training_data, batch_size=2048, negative_samples=5)
         
         # Save the trained model
+        save_start_time = time.perf_counter()
         model.save_model(model_file)
+        save_end_time = time.perf_counter()
+        print(f"Model saving time: {save_end_time - save_start_time:.2f} seconds")
+    
+    overall_end_time = time.perf_counter()
+    print(f"Total execution time: {overall_end_time - overall_start_time:.2f} seconds")
     
     # ---------------------------
     # Interactive Query Interface
@@ -287,14 +346,21 @@ def main():
         if query == 'exit':
             break
         
+        query_start_time = time.perf_counter()
+        
         # Clean the query by removing punctuation
         clean_query = remove_punctuation(query)
         
         similar_terms = model.find_similar_words(clean_query)
+        
+        query_end_time = time.perf_counter()
+        query_elapsed_time = query_end_time - query_start_time
+        
         if similar_terms:
             print(f"\nTerms similar to '{clean_query}':")
             for i, (term, score) in enumerate(similar_terms, 1):
                 print(f"{i}. {term} (confidence: {score*100:.2f}%)")
+            print(f"Total query processing time: {query_elapsed_time:.4f} seconds")
         else:
             print(f"No similar terms found for '{clean_query}'.")
 
