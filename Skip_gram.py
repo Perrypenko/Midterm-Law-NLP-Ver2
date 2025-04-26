@@ -272,7 +272,7 @@ def main():
     # Interactive Query Interface
     # ---------------------------
     while True:
-        query = input("\nEnter a legal term (or 'exit' to quit): ").strip().lower()
+        query = input("\nEnter a legal term to find Similar UK terms: ").strip().lower()
         if query == 'exit':
             break
     
@@ -280,7 +280,7 @@ def main():
         if similar_terms:
             print(f"\nTerms similar to '{query}':")
             for i, (term, score) in enumerate(similar_terms, 1):
-                print(f"{i}. {term} (confidence: {score:.4f})")
+                print(f"{i}. {term} (confidence: {score*100:.2f}%)")
         else:
             print(f"No similar terms found for '{query}'.")
 
