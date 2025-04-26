@@ -6,6 +6,9 @@ from sklearn.metrics.pairwise import cosine_similarity
 import gc  # For garbage collection
 import os  # For file operations
 
+# ---------------------------
+# Skip-Gram Model Definition
+# ---------------------------
 class OptimizedSkipGram:
     def __init__(self, vector_size=100, window_size=2, learning_rate=0.025, epochs=5, min_count=5, max_vocab_size=50000):
         self.vector_size = vector_size
@@ -20,7 +23,10 @@ class OptimizedSkipGram:
         self.vocab_size = 0
         self.W = None
         self.W_prime = None
-        
+    
+    # ---------------------------
+    # Step 1: Vocabulary Building
+    # ---------------------------
     def build_vocab(self, word_counts=None):
         if word_counts:
             self.word_counts = word_counts
@@ -46,6 +52,9 @@ class OptimizedSkipGram:
         del vocab
         gc.collect()
     
+    # ---------------------------
+    # Step 2: Training Data Generation
+    # ---------------------------
     def generate_training_data(self, corpus, subsample_threshold=1e-5):
         training_data = []
         total_words = sum(self.word_counts.values())
@@ -74,6 +83,9 @@ class OptimizedSkipGram:
         print(f"Generated {len(training_data)} training pairs")
         return training_data
     
+    # ---------------------------
+    # Step 3: Model Training with Negative Sampling
+    # ---------------------------
     def train(self, training_data, batch_size=2048, negative_samples=5):
         for epoch in range(self.epochs):
             loss = 0
@@ -118,6 +130,9 @@ class OptimizedSkipGram:
             
             print(f"Epoch {epoch+1}/{self.epochs}, Loss: {loss/len(training_data)}")
     
+    # ---------------------------
+    # Step 4: Word Vector Operations
+    # ---------------------------
     def get_word_vector(self, word):
         if word in self.word_to_idx:
             return self.W[self.word_to_idx[word]]
@@ -149,6 +164,9 @@ class OptimizedSkipGram:
         
         return sorted(similarities, key=lambda x: x[1], reverse=True)[:top_n]
     
+    # ---------------------------
+    # Step 5: Model Persistence
+    # ---------------------------
     def save_model(self, filepath):
         """Save the trained model to disk"""
         model_data = {
@@ -191,6 +209,9 @@ class OptimizedSkipGram:
         print(f"Model loaded from {filepath}")
         return model
 
+# ---------------------------
+# Data Loading Functions
+# ---------------------------
 def load_jsonl_sample(file_path, max_docs=5000, max_tokens_per_doc=1000):
     """Load a sample of the JSONL file with limits on document and token counts"""
     corpus = []
@@ -217,6 +238,9 @@ def load_jsonl_sample(file_path, max_docs=5000, max_tokens_per_doc=1000):
     print(f"Loaded {len(corpus)} documents with {sum(len(doc) for doc in corpus)} tokens")
     return corpus, word_counts
 
+# ---------------------------
+# Main Execution
+# ---------------------------
 def main():
     # File path to your JSONL file
     jsonl_file = "uk_legislation/train.jsonl"
@@ -244,17 +268,19 @@ def main():
         # Save the trained model
         model.save_model(model_file)
     
-    # Interactive query loop
+    # ---------------------------
+    # Interactive Query Interface
+    # ---------------------------
     while True:
         query = input("\nEnter a legal term (or 'exit' to quit): ").strip().lower()
         if query == 'exit':
             break
-        
+    
         similar_terms = model.find_similar_words(query)
         if similar_terms:
             print(f"\nTerms similar to '{query}':")
-            for term, score in similar_terms:
-                print(f"- {term} (similarity: {score:.4f})")
+            for i, (term, score) in enumerate(similar_terms, 1):
+                print(f"{i}. {term} (confidence: {score:.4f})")
         else:
             print(f"No similar terms found for '{query}'.")
 

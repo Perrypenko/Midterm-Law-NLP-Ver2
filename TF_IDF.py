@@ -1,288 +1,343 @@
 import json
+import pandas as pd
 import numpy as np
-from collections import Counter
-import random
+import os
+import re
+import time
+import logging
+from typing import List, Dict, Any
+from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
-import gc  # For garbage collection
-import os  # For file operations
+from sklearn.decomposition import TruncatedSVD
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[logging.FileHandler("legislation_retrieval.log"), logging.StreamHandler()]
+)
+logger = logging.getLogger("legislation_retrieval")
 
 # ---------------------------
-# Skip-Gram Model Definition
+# Utility: Preprocessing
 # ---------------------------
-class OptimizedSkipGram:
-    def __init__(self, vector_size=100, window_size=2, learning_rate=0.025, epochs=5, min_count=5, max_vocab_size=50000):
-        self.vector_size = vector_size
-        self.window_size = window_size
-        self.learning_rate = learning_rate
-        self.epochs = epochs
-        self.min_count = min_count
-        self.max_vocab_size = max_vocab_size
-        self.word_to_idx = {}
-        self.idx_to_word = {}
-        self.word_counts = Counter()
-        self.vocab_size = 0
-        self.W = None
-        self.W_prime = None
+def preprocess_text(text):
+    """Preprocess text for better retrieval performance."""
+    if not text:
+        return ""
+        
+    # Convert to lowercase
+    text = text.lower()
     
-    # ---------------------------
-    # Step 1: Vocabulary Building
-    # ---------------------------
-    def build_vocab(self, word_counts=None):
-        if word_counts:
-            self.word_counts = word_counts
-        
-        # Filter by frequency and limit vocabulary size
-        vocab = [word for word, count in self.word_counts.most_common(self.max_vocab_size) 
-                if count >= self.min_count]
-        
-        print(f"Vocabulary size: {len(vocab)} words")
-        
-        # Create word mappings
-        self.word_to_idx = {word: i for i, word in enumerate(vocab)}
-        self.idx_to_word = {i: word for i, word in enumerate(vocab)}
-        self.vocab_size = len(vocab)
-        
-        # Initialize weights
-        self.W = np.random.uniform(-0.1/self.vector_size, 0.1/self.vector_size, 
-                                  (self.vocab_size, self.vector_size))
-        self.W_prime = np.random.uniform(-0.1/self.vector_size, 0.1/self.vector_size, 
-                                        (self.vector_size, self.vocab_size))
-        
-        # Clear memory
-        del vocab
-        gc.collect()
+    # Remove special characters
+    text = re.sub(r'[^\w\s]', ' ', text)
     
-    # ---------------------------
-    # Step 2: Training Data Generation
-    # ---------------------------
-    def generate_training_data(self, corpus, subsample_threshold=1e-5):
-        training_data = []
-        total_words = sum(self.word_counts.values())
+    # Remove extra whitespace
+    text = re.sub(r'\s+', ' ', text).strip()
+    
+    # Remove numbers (optional)
+    text = re.sub(r'\d+', '', text)
+    
+    # Remove common stopwords (optional)
+    stopwords = ['the', 'and', 'or', 'of', 'to', 'in', 'a', 'for', 'with', 'by', 'on', 'at']
+    word_tokens = text.split()
+    filtered_text = [word for word in word_tokens if word not in stopwords]
+    text = ' '.join(filtered_text)
+    
+    # Stemming or lemmatization could be added here
+    # This would require importing nltk or spacy libraries
+    
+    return text
+
+
+# ---------------------------
+# Step 1: Preprocessing & Saving with LSA
+# ---------------------------
+def preprocess_legislation_data(jsonl_path,
+                               processed_path='preprocessed_legislation.pkl',
+                               vectorizer_path='tfidf_vectorizer.pkl',
+                               svd_path='svd_model.pkl',
+                               lsa_matrix_path='lsa_matrix.npy',
+                               n_components=100):
+    """Preprocess legislation data and apply TF-IDF and LSA transformations."""
+    try:
+        logger.info("Preprocessing legislation data. This may take a while...")
+        start_time = time.time()
         
-        for sentence in corpus:
-            word_indices = []
-            # Convert sentence to indices and apply subsampling
-            for word in sentence:
-                if word in self.word_to_idx:
-                    # Subsampling frequent words
-                    word_freq = self.word_counts[word] / total_words
-                    prob = max(0, 1 - np.sqrt(subsample_threshold / word_freq))
+        # Load JSONL and convert to DataFrame
+        data = []
+        with open(jsonl_path, 'r', encoding='utf-8') as f:
+            for line in f:
+                try:
+                    data.append(json.loads(line))
+                except json.JSONDecodeError as e:
+                    logger.warning(f"Skipping invalid JSON line: {e}")
                     
-                    if random.random() > prob:
-                        word_indices.append(self.word_to_idx[word])
+        df = pd.DataFrame(data)
+        logger.info(f"Loaded {len(df)} documents.")
+        
+        # Preprocess text and create preview
+        logger.info("Preprocessing text...")
+        df['processed_text'] = df['text'].apply(preprocess_text)
+        df['text_preview'] = df['text'].apply(lambda x: x[:200] + '...' if len(x) > 200 else x)
+        
+        # Extract title from the first line or first sentence
+        df['title'] = df['text'].apply(lambda x: x.split('\n')[0] if '\n' in x else (x.split('.')[0] if '.' in x else x[:50]))
+        
+        # Save processed DataFrame
+        df[['id', 'year', 'processed_text', 'text_preview', 'title']].to_pickle(processed_path)
+        logger.info(f"Processed DataFrame saved to {processed_path}")
+        
+        # TF-IDF Vectorization
+        logger.info("Fitting TF-IDF vectorizer...")
+        tfidf_vectorizer = TfidfVectorizer(
+            max_df=0.85, min_df=2, stop_words='english',
+            use_idf=True, norm='l2', ngram_range=(1, 2)
+        )
+        tfidf_matrix = tfidf_vectorizer.fit_transform(df['processed_text'])
+        logger.info(f"TF-IDF matrix shape: {tfidf_matrix.shape}")
+        
+        # Apply LSA using TruncatedSVD for dimensionality reduction
+        logger.info(f"Applying LSA to {n_components} components...")
+        svd_model = TruncatedSVD(
+            n_components=n_components, algorithm='randomized', 
+            n_iter=7, random_state=42
+        )
+        lsa_matrix = svd_model.fit_transform(tfidf_matrix)
+        logger.info(f"LSA matrix shape: {lsa_matrix.shape}")
+        logger.info(f"Explained variance ratio sum: {svd_model.explained_variance_ratio_.sum():.4f}")
+        
+        # Save models and matrices
+        import pickle
+        with open(vectorizer_path, 'wb') as f:
+            pickle.dump(tfidf_vectorizer, f)
+        with open(svd_path, 'wb') as f:
+            pickle.dump(svd_model, f)
+        np.save(lsa_matrix_path, lsa_matrix)
+        logger.info("TF-IDF vectorizer, SVD model, and LSA matrix saved.")
+        
+        elapsed_time = time.time() - start_time
+        logger.info(f"Preprocessing completed in {elapsed_time:.2f} seconds.")
+        
+        return df, tfidf_vectorizer, svd_model, lsa_matrix
+        
+    except Exception as e:
+        logger.error(f"Error during preprocessing: {str(e)}")
+        raise
+
+# ---------------------------
+# Step 2: Loading Preprocessed Data
+# ---------------------------
+def load_preprocessed_data(processed_path='preprocessed_legislation.pkl',
+                          vectorizer_path='tfidf_vectorizer.pkl',
+                          svd_path='svd_model.pkl',
+                          lsa_matrix_path='lsa_matrix.npy'):
+    """Load preprocessed data, vectorizer, SVD model, and LSA matrix."""
+    try:
+        required_files = [
+            processed_path,
+            vectorizer_path,
+            svd_path,
+            lsa_matrix_path
+        ]
+        
+        if not all(os.path.exists(p) for p in required_files):
+            logger.warning("Preprocessed files not found.")
+            return None, None, None, None
             
-            # Generate skip-gram pairs
-            for i, center_idx in enumerate(word_indices):
-                context_indices = list(range(max(0, i - self.window_size), i)) + \
-                                 list(range(i + 1, min(len(word_indices), i + self.window_size + 1)))
-                
-                for context_idx in context_indices:
-                    if 0 <= context_idx < len(word_indices):
-                        training_data.append((center_idx, word_indices[context_idx]))
+        logger.info("Loading preprocessed data...")
+        df = pd.read_pickle(processed_path)
         
-        print(f"Generated {len(training_data)} training pairs")
-        return training_data
-    
-    # ---------------------------
-    # Step 3: Model Training with Negative Sampling
-    # ---------------------------
-    def train(self, training_data, batch_size=2048, negative_samples=5):
-        for epoch in range(self.epochs):
-            loss = 0
-            random.shuffle(training_data)
+        import pickle
+        with open(vectorizer_path, 'rb') as f:
+            tfidf_vectorizer = pickle.load(f)
             
-            # Process in batches
-            for i in range(0, len(training_data), batch_size):
-                batch = training_data[i:i+batch_size]
-                batch_loss = 0
-                
-                for center_idx, context_idx in batch:
-                    # Forward pass for positive sample
-                    h = self.W[center_idx]
-                    u_positive = np.dot(h, self.W_prime[:, context_idx])
-                    sigmoid_positive = 1 / (1 + np.exp(-u_positive))
-                    
-                    # Update for positive sample
-                    gradient = self.learning_rate * (sigmoid_positive - 1)
-                    self.W[center_idx] -= gradient * self.W_prime[:, context_idx]
-                    self.W_prime[:, context_idx] -= gradient * h
-                    
-                    # Negative sampling
-                    for _ in range(negative_samples):
-                        neg_idx = random.randint(0, self.vocab_size - 1)
-                        while neg_idx == context_idx:
-                            neg_idx = random.randint(0, self.vocab_size - 1)
-                        
-                        u_negative = np.dot(h, self.W_prime[:, neg_idx])
-                        sigmoid_negative = 1 / (1 + np.exp(-u_negative))
-                        
-                        # Update for negative sample
-                        gradient = self.learning_rate * sigmoid_negative
-                        self.W[center_idx] -= gradient * self.W_prime[:, neg_idx]
-                        self.W_prime[:, neg_idx] -= gradient * h
-                    
-                    batch_loss -= np.log(sigmoid_positive)
-                
-                loss += batch_loss
-                
-                if i % (10 * batch_size) == 0:
-                    print(f"Epoch {epoch+1}, Batch {i//batch_size}, Progress: {i/len(training_data)*100:.1f}%")
+        with open(svd_path, 'rb') as f:
+            svd_model = pickle.load(f)
             
-            print(f"Epoch {epoch+1}/{self.epochs}, Loss: {loss/len(training_data)}")
-    
-    # ---------------------------
-    # Step 4: Word Vector Operations
-    # ---------------------------
-    def get_word_vector(self, word):
-        if word in self.word_to_idx:
-            return self.W[self.word_to_idx[word]]
-        return None
-    
-    def find_similar_words(self, word, top_n=10):
-        if word not in self.word_to_idx:
-            print(f"'{word}' not in vocabulary")
+        lsa_matrix = np.load(lsa_matrix_path)
+        logger.info("Successfully loaded all preprocessed data.")
+        
+        return df, tfidf_vectorizer, svd_model, lsa_matrix
+        
+    except Exception as e:
+        logger.error(f"Error loading preprocessed data: {str(e)}")
+        raise
+
+# ---------------------------
+# Step 3: Retrieval Function with LSA
+# ---------------------------
+def retrieve_relevant_legislation(query, df, tfidf_vectorizer, svd_model, lsa_matrix, top_n=3):
+    """Retrieve relevant legislation based on the query."""
+    try:
+        if not query.strip():
             return []
-        
-        word_vec = self.get_word_vector(word)
-        word_idx = self.word_to_idx[word]
-        
-        # Compute similarities in batches to save memory
-        similarities = []
-        batch_size = 1000
-        
-        for i in range(0, self.vocab_size, batch_size):
-            batch_indices = list(range(i, min(i + batch_size, self.vocab_size)))
-            batch_vectors = self.W[batch_indices]
             
-            # Compute cosine similarity
-            sims = cosine_similarity([word_vec], batch_vectors)[0]
-            
-            for j, sim in enumerate(sims):
-                idx = i + j
-                if idx != word_idx:
-                    similarities.append((self.idx_to_word[idx], sim))
+        processed_query = preprocess_text(query)
         
-        return sorted(similarities, key=lambda x: x[1], reverse=True)[:top_n]
-    
-    # ---------------------------
-    # Step 5: Model Persistence
-    # ---------------------------
-    def save_model(self, filepath):
-        """Save the trained model to disk"""
-        model_data = {
-            'vector_size': self.vector_size,
-            'window_size': self.window_size,
-            'learning_rate': self.learning_rate,
-            'epochs': self.epochs,
-            'min_count': self.min_count,
-            'max_vocab_size': self.max_vocab_size,
-            'word_to_idx': self.word_to_idx,
-            'idx_to_word': self.idx_to_word,
-            'word_counts': dict(self.word_counts),
-            'vocab_size': self.vocab_size,
-            'W': self.W,
-            'W_prime': self.W_prime
-        }
+        # Transform query using TF-IDF vectorizer
+        query_vector = tfidf_vectorizer.transform([processed_query])
         
-        np.savez_compressed(filepath, **model_data)
-        print(f"Model saved to {filepath}")
+        # Apply LSA transformation to query vector
+        query_lsa = svd_model.transform(query_vector)
+        
+        # Calculate cosine similarity
+        similarity_scores = cosine_similarity(query_lsa, lsa_matrix).flatten()
+        
+        # Get indices of top n most similar documents
+        top_indices = similarity_scores.argsort()[-top_n:][::-1]
+        
+        # Filter out results with similarity below threshold
+        min_similarity = 0.1  # Minimum similarity threshold
+        results = []
+        
+        for idx in top_indices:
+            if similarity_scores[idx] >= min_similarity:
+                # Extract title from the preview text
+                text_preview = df.iloc[idx]['text_preview']
+                title = text_preview.split('.')[0] if '.' in text_preview else text_preview.split('\n')[0]
+                
+                results.append({
+                    'id': df.iloc[idx]['id'],
+                    'year': df.iloc[idx]['year'],
+                    'similarity': similarity_scores[idx],
+                    'text_preview': text_preview,
+                    'title': title  # Add title to the dictionary
+                })
+                
+        return results
+        
+    except Exception as e:
+        logger.error(f"Error retrieving legislation: {str(e)}")
+        return []
 
-    @classmethod
-    def load_model(cls, filepath):
-        """Load a trained model from disk"""
-        loaded_data = np.load(filepath, allow_pickle=True)
-        
-        model = cls()
-        model.vector_size = loaded_data['vector_size'].item()
-        model.window_size = loaded_data['window_size'].item()
-        model.learning_rate = loaded_data['learning_rate'].item()
-        model.epochs = loaded_data['epochs'].item()
-        model.min_count = loaded_data['min_count'].item()
-        model.max_vocab_size = loaded_data['max_vocab_size'].item()
-        model.word_to_idx = loaded_data['word_to_idx'].item()
-        model.idx_to_word = loaded_data['idx_to_word'].item()
-        model.word_counts = Counter(loaded_data['word_counts'].item())
-        model.vocab_size = loaded_data['vocab_size'].item()
-        model.W = loaded_data['W']
-        model.W_prime = loaded_data['W_prime']
-        
-        print(f"Model loaded from {filepath}")
-        return model
 
 # ---------------------------
-# Data Loading Functions
+# Step 4: Main Application
 # ---------------------------
-def load_jsonl_sample(file_path, max_docs=5000, max_tokens_per_doc=1000):
-    """Load a sample of the JSONL file with limits on document and token counts"""
-    corpus = []
-    word_counts = Counter()
-    doc_count = 0
+def main(df, tfidf_vectorizer, svd_model, lsa_matrix):
+    """Run the system in interactive mode."""
+    print("\n" + "="*50)
+    print("UK Legislation Retrieval System")
+    print("="*50)
+    print("Enter a case description to find relevant UK legislation.")
+    print("Commands:")
+    print("  'exit' - Quit the program")
+    print("  'test' - Run a quick test with sample queries")
+    print("  'help' - Show this help message")
+    print("="*50)
     
-    with open(file_path, 'r', encoding='utf-8') as f:
-        for line in f:
-            if doc_count >= max_docs:
+    while True:
+        try:
+            query = input("\nEnter case description: ")
+            
+            if query.lower() == 'exit':
+                print("Exiting program. Goodbye!")
                 break
                 
-            data = json.loads(line)
-            if 'text' in data:
-                # Simple tokenization and limit tokens per document
-                tokens = data['text'].lower().split()[:max_tokens_per_doc]
-                corpus.append(tokens)
+            if query.lower() == 'help':
+                print("\n" + "="*50)
+                print("UK Legislation Retrieval System - Help")
+                print("="*50)
+                print("Enter a case description to find relevant UK legislation.")
+                print("Commands:")
+                print("  'exit' - Quit the program")
+                print("  'test' - Run a quick test with sample queries")
+                print("  'help' - Show this help message")
+                print("="*50)
+                continue
                 
-                # Update word counts
-                for word in tokens:
-                    word_counts[word] += 1
+            if query.lower() == 'test':
+                test_queries = ["tax law"]
+                print("\n=== RUNNING TEST QUERIES ===")
                 
-                doc_count += 1
-    
-    print(f"Loaded {len(corpus)} documents with {sum(len(doc) for doc in corpus)} tokens")
-    return corpus, word_counts
+                for test_query in test_queries:
+                    print(f"\nTest query: '{test_query}'")
+                    start_time = time.time()
+                    results = retrieve_relevant_legislation(test_query, df, tfidf_vectorizer, svd_model, lsa_matrix)
+                    elapsed_time = time.time() - start_time
+                    
+                    print(f"\nResults for: '{test_query}' (found in {elapsed_time:.3f} seconds)")
+                    print("-" * 50)
+                    
+                    if not results:
+                        print("No relevant legislation found.")
+                    else:
+                        for i, result in enumerate(results, 1):
+                            try:
+                                title = result.get('title', 'No title available')
+                                
+                                print(f"{i}. {title}")
+                                print(f"   Year: {result['year']} | Law Code: {result['id']}")
+                                print(f"   Relevance: {result['similarity']*100:.2f}%")
+                                print(f"   Preview: {result['text_preview']}")
+                                print("-" * 50)
+                            except KeyError as e:
+                                print(f"Error displaying result {i}: Missing field {e}")
+                
+                print("\n=== TEST COMPLETE ===")
+                continue
+            
+            if not query.strip():
+                print("Please enter a valid case description.")
+                continue
+            
+            start_time = time.time()
+            results = retrieve_relevant_legislation(query, df, tfidf_vectorizer, svd_model, lsa_matrix)
+            elapsed_time = time.time() - start_time
+            
+            print(f"\nResults for: '{query}' (found in {elapsed_time:.3f} seconds)")
+            print("-" * 50)
+            
+            if not results:
+                print("No relevant legislation found.")
+            else:
+                for i, result in enumerate(results, 1):
+                    try:
+                        title = result.get('title', 'No title available')
+                        
+                        print(f"{i}. {title}")
+                        print(f"   Year: {result['year']} | Law Code: {result['id']}")
+                        print(f"   Relevance: {result['similarity']*100:.2f}%")
+                        print(f"   Preview: {result['text_preview']}")
+                        print("-" * 50)
+                    except KeyError as e:
+                        print(f"Error displaying result {i}: Missing field {e}")
+                
+        except KeyboardInterrupt:
+            print("\nOperation cancelled by user.")
+            continue
+            
+        except Exception as e:
+            logger.error(f"Error in interactive mode: {str(e)}")
+            print(f"An error occurred: {str(e)}")
 
 # ---------------------------
-# Main Execution
+# Step 5: Entry Point
 # ---------------------------
-def main():
-    # File path to your JSONL file
-    jsonl_file = "uk_legislation/train.jsonl"
-    model_file = "skipgram_model.npz"
-    
-    # Check if a trained model exists
-    if os.path.exists(model_file):
-        print("Loading pre-trained model...")
-        model = OptimizedSkipGram.load_model(model_file)
-    else:
-        # Load a sample of the corpus
-        print("No pre-trained model found. Training a new model...")
-        print("Loading corpus sample...")
-        corpus, word_counts = load_jsonl_sample(jsonl_file, max_docs=5000)
-        
-        # Initialize and train the optimized Skip-Gram model
-        print("Training optimized Skip-Gram model...")
-        model = OptimizedSkipGram(vector_size=100, window_size=2, learning_rate=0.025, 
-                                  epochs=3, min_count=5, max_vocab_size=20000)
-        model.build_vocab(word_counts)
-        
-        training_data = model.generate_training_data(corpus)
-        model.train(training_data, batch_size=2048, negative_samples=5)
-        
-        # Save the trained model
-        model.save_model(model_file)
-    
-    # ---------------------------
-    # Interactive Query Interface
-    # ---------------------------
-    while True:
-        query = input("\nEnter a legal term (or 'exit' to quit): ").strip().lower()
-        if query == 'exit':
-            break
-        
-        similar_terms = model.find_similar_words(query)
-        if similar_terms:
-            print(f"\nTerms similar to '{query}':")
-            for term, score in similar_terms:
-                print(f"- {term} (similarity: {score:.4f})")
-        else:
-            print(f"No similar terms found for '{query}'.")
-
 if __name__ == "__main__":
-    main()
+    jsonl_path = os.path.join('uk_legislation/train.jsonl')
+    processed_path = 'preprocessed_legislation.pkl'
+    vectorizer_path = 'tfidf_vectorizer.pkl'
+    svd_path = 'svd_model.pkl'
+    lsa_matrix_path = 'lsa_matrix.npy'
+
+    try:
+        # Load preprocessed data
+        df, tfidf_vectorizer, svd_model, lsa_matrix = load_preprocessed_data(
+            processed_path, vectorizer_path, svd_path, lsa_matrix_path
+        )
+        
+        # If preprocessed files don't exist, create them
+        if df is None:
+            print("Preprocessed files not found. Running preprocessing...")
+            df, tfidf_vectorizer, svd_model, lsa_matrix = preprocess_legislation_data(
+                jsonl_path, processed_path, vectorizer_path, svd_path, lsa_matrix_path, n_components=100
+            )
+        
+        # Start the main interactive system
+        main(df, tfidf_vectorizer, svd_model, lsa_matrix)
+        
+    except Exception as e:
+        logger.error(f"Fatal error: {str(e)}")
+        print(f"A fatal error occurred: {str(e)}")
